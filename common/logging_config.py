@@ -115,7 +115,7 @@ LOGGING_CONFIG = {
             "class": "logging.handlers.RotatingFileHandler",
             "level": "DEBUG",
             "formatter": "json",
-            "filename": "logs" / "my_app.log.jsonl",
+            "filename": Path("logs") / "my_app.log.jsonl",
             "maxBytes": 5000000,
             "backupCount": 5,
         },
