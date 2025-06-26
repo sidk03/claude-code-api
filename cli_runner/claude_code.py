@@ -10,7 +10,8 @@ from typing import Optional
 
 config_logging("test_logs.jsonl")
 logger = logging.getLogger(__name__)
-logger = logging.LoggerAdapter(logger=logger, extra={"test_session": 10})
+logger = logging.LoggerAdapter(logger=logger, extra={"test_session": 10}, merge_extra=True)
+
 
 
 class ClaudeProcessError(Exception):
@@ -91,7 +92,8 @@ class ClaudeCodeRunner:
                     )
                 elif msg_type == "assistant":
                     content = data.get("message", {}).get("content", str(data))
-                    logger.info(f"[{msg_type.upper()}] {content}")
+                    logger.info(f"[{msg_type.upper()}] {content}",
+                                extra={"claude_session": session_id})
                 elif msg_type == "result":
                     result = data.get("result", str(data))
                     logger.info(
@@ -242,4 +244,8 @@ async def main():
 if __name__ == "__main__":
     # Note: To run this example, you must have the 'claude' CLI tool installed
     # and authenticated on your system.
-    asyncio.run(main())
+    logger.info("Testing if it breaks")
+    # asyncio.run(main())
+
+    logger.info("msg")  # Shows test_session
+    logger.info("msg", extra={"claude_session": 123})

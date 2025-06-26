@@ -80,6 +80,30 @@ class JSONLogFormatter(logging.Formatter):
                 message[key] = val
 
         return message
+    
+class SimpleLogFormatter(logging.Formatter):
+    def __init__(self, format, datefmt : None):
+        super().__init__(fmt=format, datefmt=datefmt)
+        self.base_fmt = format
+
+    @override
+    def format(self, record):
+        extra_fields = [
+            k for k in record.__dict__
+            if k not in LOG_RECORD_BUILTIN_ATTRS
+        ]
+        fmt = self.base_fmt
+        if extra_fields:
+            extra_fmt = " " + " ".join(f"{k}=%({k})s" for k in extra_fields)
+            fmt = self.base_fmt.rstrip() + extra_fmt
+        print(f"EXTRA FIELDS {extra_fields}")
+
+        old_fmt = self._style._fmt
+        self._style._fmt = fmt
+        try:
+            return super().format(record)
+        finally:
+            self._style._fmt = old_fmt
 
 
 LOGGING_CONFIG = {
@@ -87,6 +111,7 @@ LOGGING_CONFIG = {
     "disable_existing_loggers": False,
     "formatters": {
         "simple": {
+            "()" : SimpleLogFormatter,
             "format": "[%(levelname)s|%(module)s|L%(lineno)d] %(asctime)s: %(message)s",
             "datefmt": "%Y-%m-%dT%H:%M:%S%z",
         },
