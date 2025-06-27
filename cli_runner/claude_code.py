@@ -2,7 +2,6 @@ import asyncio
 import uuid
 import os
 import json
-import shutil
 from common.logging_config import config_logging
 import logging
 from enum import StrEnum
@@ -133,7 +132,7 @@ class ClaudeCodeRunner:
                             logger.info("[ASSISTANT] Thinking...", extra=log_running)
 
                 elif msg_type == "result":
-                    logger.info(f"[FINAL MESSAGE] Received.", extra=log_running)
+                    logger.info("[FINAL MESSAGE] Received.", extra=log_running)
                     return data
 
                 elif msg_type != "user":
