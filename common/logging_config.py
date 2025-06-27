@@ -83,25 +83,43 @@ class JSONLogFormatter(logging.Formatter):
 
 
 class SimpleLogFormatter(logging.Formatter):
-    def __init__(self, format, datefmt: None):
-        super().__init__(fmt=format, datefmt=datefmt)
-        self.base_fmt = format
+    GREY = "\x1b[90m"
+    GREEN = "\x1b[32m"
+    YELLOW = "\x1b[33m"
+    RED = "\x1b[31m"
+    BOLD_RED = "\x1b[31;1m"
+    CYAN = "\x1b[36m"
+    RESET = "\x1b[0m"
+
+    def __init__(self):
+        super().__init__()
+        self.extra_keys_to_display = ['run_session_id', 'claude_session_id', 'status', 'attempt']
 
     @override
     def format(self, record):
-        extra_fields = [k for k in record.__dict__ if k not in LOG_RECORD_BUILTIN_ATTRS]
-        fmt = self.base_fmt
-        if extra_fields:
-            extra_fmt = " " + " ".join(f"{k}=%({k})s" for k in extra_fields)
-            fmt = self.base_fmt.rstrip() + extra_fmt
-        print(f"EXTRA FIELDS {extra_fields}")
+        level_color = {
+            logging.DEBUG: self.GREY,
+            logging.INFO: self.GREEN,
+            logging.WARNING: self.YELLOW,
+            logging.ERROR: self.RED,
+            logging.CRITICAL: self.BOLD_RED,
+        }.get(record.levelno, self.GREY)
+        timestamp = dt.datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S")
 
-        old_fmt = self._style._fmt
-        self._style._fmt = fmt
-        try:
-            return super().format(record)
-        finally:
-            self._style._fmt = old_fmt
+        log_str = (
+            f"[{level_color}{record.levelname:^7}{self.RESET}|{record.name}] "
+            f"{self.GREY}{timestamp}{self.RESET}: {record.getMessage()}"
+        )
+        extra_parts = []
+        for key in self.extra_keys_to_display:
+            if hasattr(record, key):
+                # Format -> key=value
+                extra_parts.append(f"{self.CYAN}{key}{self.RESET}={getattr(record, key)}")
+
+        if extra_parts:
+            log_str += f" {self.GREY}[{' '.join(extra_parts)}]{self.RESET}"
+
+        return log_str
 
 
 LOGGING_CONFIG = {
@@ -110,12 +128,10 @@ LOGGING_CONFIG = {
     "formatters": {
         "simple": {
             "()": SimpleLogFormatter,
-            "format": "[%(levelname)s|%(module)s|L%(lineno)d] %(asctime)s: %(message)s",
-            "datefmt": "%Y-%m-%dT%H:%M:%S%z",
         },
         "json": {
             "()": JSONLogFormatter,  # annoying python
-            "fmt_keys": {
+            "fmt_keys": {  # this mapping is so that we can change what keys are called in the logs
                 "level": "levelname",
                 "message": "message",
                 "timestamp": "timestamp",
