@@ -95,31 +95,37 @@ class ClaudeCodeRunner:
                             "status": "running"}
 
                 if msg_type == "system":
-                    content = str(data)
+                    cwd = data.get('cwd', 'N/A')
                     logger.info(
-                        f"[{msg_type.upper()} : {content}]",
+                        f"[SYSTEM] Initialized in directory: {cwd}",
                         extra=log_running,
                     )
+
                 elif msg_type == "assistant":
-                    content = data.get("message", {}).get("content", str(data))
-                    logger.info(
-                        f"[{msg_type.upper()}] : {content}]",
-                        extra=log_running,
-                    )
+                    content_list = data.get("message", {}).get("content", [])
+                    for content_item in content_list:
+                        item_type = content_item.get("type")
+                        if item_type == "tool_use":
+                            tool_name = content_item.get('name', 'UnknownTool')
+                            tool_input = content_item.get('input', {})
+                            input_str = ", ".join([f"{k}='{v}'" for k, v in tool_input.items()])
+                            display_input = (input_str[:250] + '...') if len(input_str) > 250 else input_str
+                            logger.info(f"[ASSISTANT] Tool Use: {tool_name}({display_input})", extra=log_running)
+                        elif item_type == "text":
+                            text = content_item.get("text", "").strip()
+                            if text:
+                                display_text = (text[:250] + '...') if len(text) > 250 else text
+                                logger.info(f"[ASSISTANT] Response: {display_text}", extra=log_running)
+                        elif item_type == "thinking":
+                            logger.info("[ASSISTANT] Thinking...", extra=log_running)
+                   
                 elif msg_type == "result":
-                    result = data.get("result", str(data))
-                    logger.info(
-                        f"[Final Message Recieved : {result}]",
-                        extra=log_running,
-                    )
+                    logger.info(f"[FINAL MESSAGE] Received.", extra=log_running)
                     return data
-                elif msg_type == "user":
-                    pass
-                else:
-                    logger.debug(
-                        f"[OTHER] Received unhandled message type: {line}",
-                        extra=log_running,
-                    )
+                
+                elif msg_type != "user":
+                    logger.debug(f"[OTHER] Unhandled message type: {line}", extra=log_running)
+
             except json.JSONDecodeError:
                 logger.warning(
                     f"Received non-JSON line from stdout: {line}",
@@ -136,13 +142,12 @@ class ClaudeCodeRunner:
     async def _stream_stderr_handler(
         self, stream: asyncio.StreamReader, run_session_id: str
     ) -> str:
-        async for line in stream:
-            if not line:
-                continue
-            line = line.decode("utf-8").strip()
-            logger.error(
-                line, extra={"run_session_id": run_session_id, "status": "running"}
-            )
+        stderr_output = await stream.read()
+        decoded_stderr = stderr_output.decode('utf-8').strip()
+        if decoded_stderr:
+            for line in decoded_stderr.splitlines():
+                 logger.error(f"[STDERR] {line}", extra={'run_session_id': run_session_id, 'status': 'running'})
+        return decoded_stderr
 
     async def _run_claude_instance(
         self,
@@ -259,6 +264,7 @@ class ClaudeCodeRunner:
                         extra={**log_extra, "status":"retrying"},
                     )
                     await asyncio.sleep(wait_time)
+
                 result =  await self._run_claude_instance(
                     prompt, directory, run_session_id, model, continue_conversation
                 )
@@ -274,5 +280,4 @@ class ClaudeCodeRunner:
         raise ClaudeProcessError(
             f"All {self._retries + 1} attempts to run Claude failed."
         ) from last_exception
-
 
