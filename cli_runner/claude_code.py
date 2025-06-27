@@ -1,7 +1,7 @@
 import asyncio
+import uuid
 import os
 import json
-from pathlib import Path
 import shutil
 from common.logging_config import config_logging
 import logging
@@ -10,12 +10,13 @@ from typing import Optional
 
 config_logging("test_logs.jsonl")
 logger = logging.getLogger(__name__)
-logger = logging.LoggerAdapter(logger=logger, extra={"test_session": 10}, merge_extra=True)
-
+# logger = logging.LoggerAdapter(logger, extra={"session_id":10})
 
 
 class ClaudeProcessError(Exception):
-    pass
+    def __init__(self, message, result_data=None):
+        super().__init__(message)
+        self.result_data = result_data
 
 
 class CLAUDE_CODE_MODELS(StrEnum):
@@ -37,7 +38,7 @@ class ClaudeCodeRunner:
         retries: int = 2,
     ):
         self._permissions = permissions
-        self._retries = retries
+        self._retries = max(0, retries)
 
     def _get_allowed_tools(self) -> list[str]:
         if self._permissions == FilePermissions.READ_ONLY:
@@ -74,7 +75,9 @@ class ClaudeCodeRunner:
         else:
             return []
 
-    async def _stream_stdout_handler(self, stream: asyncio.StreamReader) -> dict:
+    async def _stream_stdout_handler(
+        self, stream: asyncio.StreamReader, run_session_id: str
+    ) -> Optional[dict]:
         async for line in stream:
             line = line.decode("utf-8").strip()
             if not line:
@@ -82,23 +85,37 @@ class ClaudeCodeRunner:
             try:
                 data = json.loads(line)
                 msg_type = data.get("type")
-                session_id = data.get("session_id")
+                claude_session_id = data.get("session_id")
 
                 if msg_type == "system":
                     content = str(data)
                     logger.info(
-                        f"[{msg_type.upper()}] {content}",
-                        extra={"claude_session": session_id},
+                        f"[{msg_type.upper()} : {content}]",
+                        extra={
+                            "claude_session_id": claude_session_id,
+                            "run_session_id": run_session_id,
+                            "run_completed": False,
+                        },
                     )
                 elif msg_type == "assistant":
                     content = data.get("message", {}).get("content", str(data))
-                    logger.info(f"[{msg_type.upper()}] {content}",
-                                extra={"claude_session": session_id})
+                    logger.info(
+                        f"[{msg_type.upper()}] : {content}]",
+                        extra={
+                            "claude_session_id": claude_session_id,
+                            "run_session_id": run_session_id,
+                            "run_completed": False,
+                        },
+                    )
                 elif msg_type == "result":
                     result = data.get("result", str(data))
                     logger.info(
-                        f"Final Message Recieved : {result}",
-                        extra={"claude_session": session_id},
+                        f"[Final Message Recieved : {result}]",
+                        extra={
+                            "claude_session_id": claude_session_id,
+                            "run_session_id": run_session_id,
+                            "run_completed": True,
+                        },
                     )
                     return data
                 elif msg_type == "user":
@@ -106,30 +123,72 @@ class ClaudeCodeRunner:
                 else:
                     logger.debug(
                         f"[OTHER] Received unhandled message type: {line}",
-                        extra={"claude_session": session_id},
+                        extra={
+                            "claude_session_id": claude_session_id,
+                            "run_session_id": run_session_id,
+                            "run_completed": False,
+                        },
                     )
             except json.JSONDecodeError:
-                logger.warning(f"Received non-JSON line from stdout: {line}")
+                logger.warning(
+                    f"Received non-JSON line from stdout: {line}",
+                    extra={"run_session_id": run_session_id, "run_completed": False},
+                )
             except Exception as e:
-                logger.error(f"Error processing stream line: {line}. Error: {e}")
+                logger.error(
+                    f"Error processing stream line: {line}. Error: {e}",
+                    extra={"run_session_id": run_session_id, "run_completed": False},
+                )
 
         return None
 
-    async def _stream_stderr_handler(self, stream: asyncio.StreamReader):
+    async def _stream_stderr_handler(
+        self, stream: asyncio.StreamReader, run_session_id: str
+    ) -> str:
         async for line in stream:
             line = line.decode("utf-8").strip()
             if not line:
                 continue
-            logger.error(line)
+            logger.error(
+                line, extra={"run_session_id": run_session_id, "run_completed": False}
+            )
 
     async def _run_claude_instance(
         self,
         prompt: str,
         directory: str,
+        run_session_id: str,
         model: CLAUDE_CODE_MODELS = CLAUDE_CODE_MODELS.CLAUDE_SONNET_4,
         continue_conversation: bool = False,
     ) -> dict:
-        cmd_args = [
+        async def _run_and_stream(
+            cmd_args: list[str],
+        ) -> tuple[int, str, Optional[dict]]:
+            logger.debug(
+                f"Executing command: {' '.join(cmd_args)}",
+                extra={"run_session_id": run_session_id, "run_completed": False},
+            )
+            process = await asyncio.create_subprocess_exec(
+                *cmd_args,
+                cwd=directory,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=os.environ.copy(),
+            )
+            stdout_task = asyncio.create_task(
+                self._stream_stdout_handler(process.stdout)
+            )
+            stderr_task = asyncio.create_task(
+                self._stream_stderr_handler(process.stderr)
+            )
+
+            final_result_json, stderr_output = await asyncio.gather(
+                stdout_task, stderr_task
+            )
+            await process.wait()
+            return process.returncode, stderr_output, final_result_json
+
+        cmd_base = [
             "claude",
             "-p",
             prompt,
@@ -141,37 +200,61 @@ class ClaudeCodeRunner:
             "--allowedTools",
             ",".join(self._get_allowed_tools()),
         ]
-        if continue_conversation:
-            cmd_args.insert(1, "-c")
-        if self._permissions == FilePermissions.FULL_ACCESS:
-            cmd_args.append("--dangerously-skip-permissions")
 
-        process = await asyncio.create_subprocess_exec(
-            *cmd_args,
-            cwd=directory,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=os.environ.copy(),
+        if continue_conversation:
+            logger.info(
+                "Attempting to continue conversation with '-c' flag.",
+                extra={"run_session_id": run_session_id, "run_completed": False},
+            )
+            cmd_with_c = cmd_base.insert(1, "-c")
+            return_code, stderr, result_obj = await _run_and_stream(cmd_with_c)
+
+            if return_code != 0 and "No prior conversation history found" in stderr:
+                logger.warning(
+                    "Continuation failed as no history was found. Retrying immediately without '-c'.",
+                    extra={
+                        "run_session_id": run_session_id,
+                        "run_completed": True,
+                        "run_failed": True,
+                    },
+                )
+                return_code, stderr, result_obj = await _run_and_stream(cmd_base)
+        else:
+            return_code, stderr, result_obj = await _run_and_stream(cmd_base)
+
+        logger.info(
+            f"Process finished with exit code {return_code}",
+            extra={
+                "run_session_id": run_session_id,
+                "run_completed": True,
+                "run_failed": True if return_code != 0 else False,
+            },
         )
 
-        stdout_task = asyncio.create_task(self._stream_stdout_handler(process.stdout))
-        stderr_task = asyncio.create_task(self._stream_stderr_handler(process.stderr))
-
-        result, _ = await asyncio.gather(stdout_task, stderr_task)
-        await process.wait()
-
-        logger.info(f"Process finished with exit code {process.returncode}")
-
-        if process.returncode != 0:
+        if return_code != 0:
             raise ClaudeProcessError(
-                f"Claude CLI failed with exit code {process.returncode}"
+                f"CLI tool failed with exit code {return_code}. Stderr: {stderr}"
             )
-        if not result:
+        if not result_obj:
             raise ClaudeProcessError(
-                "Claude CLI finished successfully but produced no final result."
+                "CLI tool finished but produced no final result object."
             )
 
-        return result
+        is_error = result_obj.get("is_error", True)
+        subtype = result_obj.get("subtype")
+        if is_error or subtype != "success":
+            error_message = f"Claude returned a non-successful result. Subtype: '{subtype}', Is Error: {is_error}."
+            logger.error(
+                error_message,
+                extra={
+                    "run_session_id": run_session_id,
+                    "run_completed": True,
+                    "run_failed": True,
+                },
+            )
+            raise ClaudeProcessError(error_message, result_data=result_obj)
+
+        return result_obj.get("result", "")
 
     async def run_claude_code(
         self,
@@ -181,71 +264,32 @@ class ClaudeCodeRunner:
         continue_conversation: bool = False,
     ):
         last_exception = None
+        run_session_id = f"claude-{uuid.uuid4().hex[:8]}"
         for attempt in range(self._retries + 1):
             try:
                 if attempt > 0:
                     wait_time = 2**attempt
                     logger.info(
-                        f"Retrying in {wait_time} seconds... (Attempt {attempt + 1}/{self._retries + 1})"
+                        f"Retrying in {wait_time} seconds... (Attempt {attempt + 1}/{self._retries + 1})",
+                        extra={"run_session_id": run_session_id},
                     )
                     await asyncio.sleep(wait_time)
                 return await self._run_claude_instance(
-                    prompt, directory, model, continue_conversation
+                    prompt, directory, run_session_id, model, continue_conversation
                 )
             except (ClaudeProcessError, OSError) as e:
                 last_exception = e
-                logger.error(f"Execution failed on attempt {attempt + 1}. Error: {e}")
+                logger.error(
+                    f"Execution failed on attempt {attempt + 1}. Error: {e}",
+                    extra={
+                        "run_session_id": run_session_id,
+                        "run_completed": True,
+                        "run_failed": True,
+                    },
+                )
 
         raise ClaudeProcessError(
             f"All {self._retries + 1} attempts to run Claude failed."
         ) from last_exception
 
 
-async def main():
-    """Example usage of the ClaudeCodeRunner class."""
-    # Create a temporary directory for the execution
-    temp_dir = "claude_test_run"
-    os.makedirs(temp_dir, exist_ok=True)
-
-    # Create a dummy file for claude to read
-    with open(os.path.join(temp_dir, "hello.txt"), "w") as f:
-        f.write("Hello from the file!")
-
-    print("--- Running with READ_ONLY permissions ---")
-    try:
-        # Initialize the runner with read-only permissions and 1 retry
-        read_only_runner = ClaudeCodeRunner(
-            permissions=FilePermissions.READ_ONLY, retries=1
-        )
-        prompt = "Read the file hello.txt and tell me its content."
-        result = await read_only_runner.run_claude_code(
-            prompt=prompt, directory=temp_dir
-        )
-
-        print("\n--- FINAL RESULT ---")
-        print(result)
-        print("--------------------")
-
-    except ClaudeProcessError as e:
-        print(f"\n--- EXECUTION FAILED ---")
-        print(f"Error: {e}")
-        print("------------------------")
-    except FileNotFoundError:
-        print("\n--- SETUP FAILED ---")
-        print(
-            "Error: 'claude' command not found. Please ensure it's installed and in your PATH."
-        )
-        print("--------------------")
-
-    # Clean up the dummy directory and file
-    shutil.rmtree(temp_dir)  # Uncomment to clean up automatically
-
-
-if __name__ == "__main__":
-    # Note: To run this example, you must have the 'claude' CLI tool installed
-    # and authenticated on your system.
-    logger.info("Testing if it breaks")
-    # asyncio.run(main())
-
-    logger.info("msg")  # Shows test_session
-    logger.info("msg", extra={"claude_session": 123})
