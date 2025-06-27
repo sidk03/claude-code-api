@@ -201,12 +201,15 @@ class ClaudeCodeRunner:
             ",".join(self._get_allowed_tools()),
         ]
 
+        if self._permissions == FilePermissions.FULL_ACCESS:
+            cmd_base.append("--dangerously-skip-permissions")
+
         if continue_conversation:
             logger.info(
                 "Attempting to continue conversation with '-c' flag.",
                 extra={"run_session_id": run_session_id, "run_completed": False},
             )
-            cmd_with_c = cmd_base.insert(1, "-c")
+            cmd_with_c = ["claude", "-c"] + cmd_base[1:]
             return_code, stderr, result_obj = await _run_and_stream(cmd_with_c)
 
             if return_code != 0 and "No prior conversation history found" in stderr:
