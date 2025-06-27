@@ -93,7 +93,12 @@ class SimpleLogFormatter(logging.Formatter):
 
     def __init__(self):
         super().__init__()
-        self.extra_keys_to_display = ['run_session_id', 'claude_session_id', 'status', 'attempt']
+        self.extra_keys_to_display = [
+            "run_session_id",
+            "claude_session_id",
+            "status",
+            "attempt",
+        ]
 
     @override
     def format(self, record):
@@ -104,7 +109,9 @@ class SimpleLogFormatter(logging.Formatter):
             logging.ERROR: self.RED,
             logging.CRITICAL: self.BOLD_RED,
         }.get(record.levelno, self.GREY)
-        timestamp = dt.datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = dt.datetime.fromtimestamp(record.created).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
 
         log_str = (
             f"[{level_color}{record.levelname:^7}{self.RESET}|{record.name}] "
@@ -114,7 +121,9 @@ class SimpleLogFormatter(logging.Formatter):
         for key in self.extra_keys_to_display:
             if hasattr(record, key):
                 # Format -> key=value
-                extra_parts.append(f"{self.CYAN}{key}{self.RESET}={getattr(record, key)}")
+                extra_parts.append(
+                    f"{self.CYAN}{key}{self.RESET}={getattr(record, key)}"
+                )
 
         if extra_parts:
             log_str += f" {self.GREY}[{' '.join(extra_parts)}]{self.RESET}"
