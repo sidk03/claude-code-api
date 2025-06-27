@@ -160,7 +160,7 @@ class ClaudeCodeRunner:
         run_session_id: str,
         model: CLAUDE_CODE_MODELS = CLAUDE_CODE_MODELS.CLAUDE_SONNET_4,
         continue_conversation: bool = False,
-    ) -> dict:
+    ) -> str:
         async def _run_and_stream(
             cmd_args: list[str],
         ) -> tuple[int, str, Optional[dict]]:
@@ -176,10 +176,10 @@ class ClaudeCodeRunner:
                 env=os.environ.copy(),
             )
             stdout_task = asyncio.create_task(
-                self._stream_stdout_handler(process.stdout)
+                self._stream_stdout_handler(process.stdout, run_session_id)
             )
             stderr_task = asyncio.create_task(
-                self._stream_stderr_handler(process.stderr)
+                self._stream_stderr_handler(process.stderr, run_session_id)
             )
 
             final_result_json, stderr_output = await asyncio.gather(
@@ -265,7 +265,7 @@ class ClaudeCodeRunner:
         directory: str,
         model: CLAUDE_CODE_MODELS = CLAUDE_CODE_MODELS.CLAUDE_SONNET_4,
         continue_conversation: bool = False,
-    ):
+    ) -> str:
         last_exception = None
         run_session_id = f"claude-{uuid.uuid4().hex[:8]}"
         for attempt in range(self._retries + 1):
