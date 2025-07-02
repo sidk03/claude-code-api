@@ -136,7 +136,13 @@ class ClaudeCodeRunner:
                             logger.info("[ASSISTANT] Thinking...", extra=log_running)
 
                 elif msg_type == "result":
-                    logger.info("[FINAL MESSAGE] Received.", extra=log_running)
+                    data_str = json.dumps(data)
+                    display_text = (
+                        (data_str[:250] + "...") if len(data_str) > 250 else data_str
+                    )
+                    logger.info(
+                        f"[FINAL MESSAGE] Received: {display_text}", extra=log_running
+                    )
                     return data
 
                 elif msg_type != "user":
