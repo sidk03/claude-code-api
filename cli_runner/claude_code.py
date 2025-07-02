@@ -29,15 +29,19 @@ class FilePermissions(StrEnum):
 
 
 class ClaudeCodeRunner:
-    __slots__ = ("_permissions", "_retries")
+    __slots__ = ("_permissions", "_retries", "_runner_instance")
+
+    claude_instance = 0
 
     def __init__(
         self,
-        permissions: FilePermissions,
-        retries: int = 2,
+        permissions: FilePermissions = FilePermissions.READ_ONLY,
+        retries: int = 5,
     ):
         self._permissions = permissions
         self._retries = max(0, retries)
+        self._runner_instance = 0
+        ClaudeCodeRunner.claude_instance += 1
 
     def _get_allowed_tools(self) -> list[str]:
         if self._permissions == FilePermissions.READ_ONLY:
@@ -270,7 +274,10 @@ class ClaudeCodeRunner:
         continue_conversation: bool = False,
     ) -> str:
         last_exception = None
-        run_session_id = f"claude-{uuid.uuid4().hex[:8]}"
+        self.runner_instance += 1
+        run_session_id = (
+            f"claude-{type(self).claude_instance}-runner-{self.runner_instance}"
+        )
         logger.info(
             "Starting Claude execution.",
             extra={"run_session_id": run_session_id, "status": "starting"},
