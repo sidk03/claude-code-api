@@ -1,14 +1,12 @@
-Access Claude Code via API or SlackBot
+Bulletproof SDK for Claude Code, handles internal errors in structure or response type and has retry policy.
 
-Plan:
-1. API Gateway -> FastAPI -> 2 end points (index + modify)
-2. Redis Cache for Codebases + Lock to prevent workers from working on same branch (dif bw index and modify) + Anthropic rate limit check
-3. Message broker for different calls -> RabbitMQ
-4. Woekers -> Celery for getting codebase (may be cached) and running claude code
+Running Instructions,
+1. Make sure claude code is setup locally
+2. Make a single instance of the claude runner with the desired file permissions and retry count
+3. Set desired log level for stdout in the logging config, info will show all updates. Also set the desired file path for the log directory in the config_logging function.
+4. Run as many session concurrently, use a task group or asyncio.gather to collect responses
+5. Except and handle the Claude Exception on the slim chance that it fails all retries
 
 
-
-Issues to Solve:
-1. Stream Json has different message types -> System, Assistant, Result -> some filter
-2. How to read the messages line by line, I want to read it json by json
-3. Do I need to queue the output ?
+Known Bug,
+Claude Code currently truncates json output longer then 8000 tokens ??? Should be fixed on next release, beware if you are producing very long output.
