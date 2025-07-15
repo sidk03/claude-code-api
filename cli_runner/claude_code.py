@@ -81,12 +81,21 @@ class ClaudeCodeRunner:
     async def _stream_stdout_handler(
         self, stream: asyncio.StreamReader, run_session_id: str
     ) -> Optional[dict]:
+        buffer = ""
+        log_error = {"run_session_id": run_session_id, "status": "running"}
         async for line in stream:
             if not line:
                 continue
             line = line.decode("utf-8").strip()
+            if not line:
+                continue
+
+            buffer = buffer + line if buffer else line
             try:
-                data = json.loads(line)
+                data = json.loads(buffer)
+                # success
+                buffer = ""
+
                 msg_type = data.get("type")
                 claude_session_id = data.get("session_id")
                 log_running = {
@@ -94,7 +103,6 @@ class ClaudeCodeRunner:
                     "run_session_id": run_session_id,
                     "status": "running",
                 }
-                log_error = {"run_session_id": run_session_id, "status": "running"}
 
                 if msg_type == "system":
                     cwd = data.get("cwd", "N/A")
@@ -136,7 +144,12 @@ class ClaudeCodeRunner:
                             logger.info("[ASSISTANT] Thinking...", extra=log_running)
 
                 elif msg_type == "result":
-                    display_text = (line[:250] + "...") if len(line) > 250 else line
+                    result_str = json.dumps(data)
+                    display_text = (
+                        (result_str[:250] + "...")
+                        if len(result_str) > 250
+                        else result_str
+                    )
                     logger.info(
                         f"[FINAL MESSAGE] Received: {display_text}", extra=log_running
                     )
@@ -149,14 +162,22 @@ class ClaudeCodeRunner:
 
             except json.JSONDecodeError:
                 logger.warning(
-                    f"Received non-JSON line from stdout: {line}",
+                    f"Received Incomplete JSON line from stdout: {buffer}",
                     extra=log_error,
                 )
+                continue
             except Exception as e:
                 logger.error(
                     f"Error processing stream line: {line}. Error: {e}",
                     extra=log_error,
                 )
+                buffer = ""
+
+        if buffer:
+            logger.warning(
+                f"Stream ended with incomplete JSON in buffer (length: {len(buffer)})",
+                extra=log_error,
+            )
 
         return None
 
