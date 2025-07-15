@@ -9,4 +9,4 @@ Running Instructions,
 
 
 Known Bug,
-Claude Code currently truncates json output longer then 8000 tokens ??? Should be fixed on next release, beware if you are producing very long output.
+Claude Code currently truncates json output longer then 8000 tokens ??? Should be fixed on next release, beware if you are producing very long output. This is temporarly fixed by buffering json lines but is not always valid.
